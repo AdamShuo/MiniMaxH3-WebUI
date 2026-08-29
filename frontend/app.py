@@ -203,6 +203,10 @@ def _on_opt_method(method):
 
 
 def build_ui():
+    # 重置全局 LoRA 控件列表，避免重复调用（如 import 时与 main.py 各调用一次）
+    # 导致列表翻倍、submit 入参数量错位（38 vs 27）。
+    _LORA_FILES.clear()
+    _LORA_STRENGTHS.clear()
     with gr.Blocks(title="MiniMax-H3 WebUI") as demo:
         gr.Markdown("# MiniMax-H3 视频生成 WebUI\n文字 / 图片 + 音频 + 视频 → 带音频视频")
         with gr.Tabs():
@@ -265,10 +269,8 @@ def build_ui():
                         status = gr.Textbox(label="状态", interactive=False)
                         video_out = gr.Video(label="生成结果")
 
-                tmpl_js = gr.JSON(visible=False)
                 demo.load(lambda: gr.update(choices=list(load_templates().keys())),
                           outputs=tmpl)
-                tmpl.change(lambda x: x, tmpl, tmpl_js, queue=False)
                 optimize_btn.click(lambda p: optimize(p, 0), [prompt], [prompt])
 
                 submit_btn.click(
@@ -295,8 +297,7 @@ def build_ui():
     return demo
 
 
-demo = build_ui()
-
 if __name__ == "__main__":
     # 独立开发时用：BACKEND_URL=http://localhost:8000 python app.py
+    demo = build_ui()
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
