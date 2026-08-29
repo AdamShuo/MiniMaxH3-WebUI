@@ -19,11 +19,17 @@ SYSTEM_PROMPT = (
 )
 
 
-async def optimize_prompt(prompt: str, model: str | None = None) -> str:
-    if not settings.llm_api_url or not settings.llm_api_key:
+async def optimize_prompt(prompt: str, model: str | None = None,
+                          overrides: dict | None = None) -> str:
+    """优化提示词；overrides 优先于环境变量设置。"""
+    ov = overrides or {}
+    api_url = ov.get("api_url") or settings.llm_api_url
+    api_key = ov.get("api_key") or settings.llm_api_key
+    model = model or ov.get("api_model") or settings.llm_model
+    if not api_url or not api_key:
         return prompt  # B3 optional — degrade
     body = {
-        "model": model or settings.llm_model,
+        "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -31,13 +37,13 @@ async def optimize_prompt(prompt: str, model: str | None = None) -> str:
         "temperature": 0.7,
     }
     headers = {
-        "Authorization": f"Bearer {settings.llm_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     try:
         async with httpx.AsyncClient(timeout=60.0) as c:
             r = await c.post(
-                f"{settings.llm_api_url.rstrip('/')}/chat/completions",
+                f"{api_url.rstrip('/')}/chat/completions",
                 headers=headers, json=body,
             )
             r.raise_for_status()

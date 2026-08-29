@@ -13,7 +13,7 @@ import gradio as gr
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import assets_router, generations_router, results_router, tasks_router, templates_router
+from .api import assets_router, generations_router, loras_router, results_router, settings_router, tasks_router, templates_router
 from .config import settings
 from .db import engine, init_db
 
@@ -63,7 +63,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (assets_router, templates_router, generations_router, tasks_router, results_router):
+for r in (assets_router, templates_router, generations_router, tasks_router,
+          results_router, loras_router, settings_router):
     app.include_router(r)
 
 # 单端口云端部署：把 Gradio UI 直接挂载到后端 "/" 上，访问 <实例>:7860 即打开 UI，

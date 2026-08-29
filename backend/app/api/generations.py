@@ -58,6 +58,7 @@ def create_generation(req: GenerationCreateRequest, db: Session = Depends(get_db
         lora_id=req.lora_id or "fl2v_turbo_8step_v1.0",
         use_fallback=bool(use_fallback),
         template_id=0,
+        template_key=req.template_key,
         status="CREATED",
     )
     db.add(gen)

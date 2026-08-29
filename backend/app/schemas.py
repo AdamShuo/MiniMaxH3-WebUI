@@ -35,6 +35,15 @@ class PromptOptimizeRequest(BaseModel):
     model: Optional[str] = None
 
 
+class OptimizerSettingsRequest(BaseModel):
+    """提示词优化器（第三方 API）设置。"""
+    api_format: str = Field(default="openai", description="API 格式：openai")
+    api_url: Optional[str] = Field(default=None, description="API 地址")
+    api_key: Optional[str] = Field(default=None, description="API Key")
+    api_model: Optional[str] = Field(default=None, description="模型名称")
+    scene_guide: Optional[str] = Field(default=None, description="场景指南 template_key")
+
+
 class PromptOptimizeRecordVO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -84,6 +93,7 @@ class GenerationRequestVO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     template_id: int = 0
+    template_key: Optional[str] = None
     optimized_prompt: Optional[str] = None
     reference_asset_ids: Optional[Any] = None
     video_asset_ids: Optional[Any] = None

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db, init_db
-from ..models import PromptOptimizeRecord, PromptTemplate
+from ..models import EngineConfig, PromptOptimizeRecord, PromptTemplate
 from ..prompt_llm import optimize_prompt
 from ..schemas import (
     PromptOptimizeRecordVO,
@@ -66,6 +66,26 @@ def _startup():
         db.close()
 
 
+_OPTIMIZER_KEYS = {
+    "api_format": "openai",
+    "api_url": "",
+    "api_key": "",
+    "api_model": "",
+    "scene_guide": "",
+}
+
+
+def _get_optimizer_settings(db) -> dict:
+    """从 EngineConfig 读取优化器 overrides（prompt_llm 使用）。"""
+    rows = {
+        r.config_key: r.config_value
+        for r in db.query(EngineConfig).filter(
+            EngineConfig.config_key.in_(_OPTIMIZER_KEYS.keys())
+        ).all()
+    }
+    return {k: rows.get(k, v) for k, v in _OPTIMIZER_KEYS.items()}
+
+
 @router.get("", response_model=list[PromptTemplateVO])
 def list_templates(db: Session = Depends(get_db)):
     _seed_templates(db)
@@ -83,10 +103,15 @@ def get_template(template_id: int, db: Session = Depends(get_db)):
 @router.post("/{template_id}/optimize", response_model=PromptOptimizeRecordVO)
 async def optimize(template_id: int, req: PromptOptimizeRequest,
                   db: Session = Depends(get_db)):
-    optimized = await optimize_prompt(req.prompt, req.model)
+    overrides = _get_optimizer_settings(db)
+    # 若请求携带 template_key，可覆盖场景指南；model 显式优先。
+    if req.template_key:
+        overrides["scene_guide"] = req.template_key
+    optimized = await optimize_prompt(req.prompt, req.model, overrides=overrides)
     rec = PromptOptimizeRecord(
         template_id=template_id, original_prompt=req.prompt,
-        optimized_prompt=optimized, model=req.model or settings.llm_model,
+        optimized_prompt=optimized,
+        model=req.model or overrides.get("api_model") or settings.llm_model,
     )
     db.add(rec)
     db.commit()

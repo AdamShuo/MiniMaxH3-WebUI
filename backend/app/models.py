@@ -53,6 +53,7 @@ class GenerationRequest(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     template_id: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    template_key: Mapped[str | None] = mapped_column(String(64), default=None, nullable=True)
     optimized_prompt: Mapped[str | None] = mapped_column(Text)
     reference_asset_ids: Mapped[str | None] = mapped_column(Text)  # JSON array of ids
     video_asset_ids: Mapped[str | None] = mapped_column(Text)  # JSON array of ids
