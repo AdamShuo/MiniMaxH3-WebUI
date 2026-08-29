@@ -1,0 +1,18 @@
+{
+  "_note": "Sanitized copy of the original MiniMaxh3_settings.json. The original Windows paths and the real LoRA path have been removed. Replace <LOCAL_LORA_NAME> with the LoRA file name you place under ./models/loras/ (e.g. minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors).",
+  "prompt": "subject_definitions:\n<Subject 1> is the young woman in <Picture 1>...\n\nsummary:\n[keyframe completion + reference generation] ...\n\nretention_analysis:\n...\n\ndetailed_description:\n...\n\noverall_soundscape:\n...\n\nnon_diegetic_music:\n...",
+  "step": 8,
+  "seed": -1,
+  "w": 1376,
+  "h": 768,
+  "time": 10,
+  "fps": 24,
+  "img_paths": [],
+  "audio_paths": [],
+  "video_paths": [],
+  "resolution": "360P",
+  "loras": [
+    { "name": "<LOCAL_LORA_NAME>", "strength": 1.0 },
+    null, null, null, null, null
+  ]
+}

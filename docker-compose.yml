@@ -1,0 +1,93 @@
+# =====================================================================
+# MiniMax-H3 WebUI — 编排文件
+#
+# 零 GPU 快速体验（仅 MiniMax 兜底，需 MINIMAX_API_KEY）：
+#   docker compose up -d
+#
+# 含本地 ComfyUI 的 GPU 全功能（需 NVIDIA 容器运行时）：
+#   1) 把 LoRA 权重放入 ./models
+#   2) 把导出的 H3 工作流放到 backend/workflows/h3_fl2v.json
+#   3) 在 .env 中设 ENABLE_COMFYUI=true
+#   4) docker compose --profile gpu up -d
+# =====================================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+      - ./models:/models:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: rq worker --url ${REDIS_URL:-redis://redis:6379/0} default
+    env_file: .env
+    environment:
+      # ComfyUI 是否启用：GPU profile 下 .env 中 ENABLE_COMFYUI=true
+      - ENABLE_COMFYUI=${ENABLE_COMFYUI:-false}
+    volumes:
+      - ./data:/data
+      - ./models:/models:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      - BACKEND_URL=http://api:8000
+    ports:
+      - "7860:7860"
+    depends_on:
+      - api
+
+  # ───── 可选：本地 ComfyUI（GPU profile 才启动）─────
+  # 镜像需自带 MiniMax-H3 节点包；本仓库不内置，请使用你自己的 ComfyUI 镜像。
+  comfyui:
+    image: ${COMFYUI_IMAGE:-comfyanonymous/comfyui:latest}
+    profiles: ["gpu"]
+    restart: unless-stopped
+    ports:
+      - "8188:8188"
+    volumes:
+      - ./models:/models:ro
+      - comfyui-output:/comfyui/output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  redis-data:
+  comfyui-output:

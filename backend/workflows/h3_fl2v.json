@@ -1,0 +1,37 @@
+{
+  "_README": "TEMPLATE — replace with your exported ComfyUI H3 workflow. Keep the {{placeholder}} tokens where the adapter should inject values. Class types / node ids below are illustrative; use the real ones from your H3 node pack.",
+  "prompt": {
+    "3": {
+      "class_type": "MiniMaxH3Loader",
+      "inputs": {
+        "model": "MiniMax-H3",
+        "lora_name": "{{lora_name}}",
+        "lora_strength": "{{lora_strength}}"
+      }
+    },
+    "6": {
+      "class_type": "MiniMaxH3Generator",
+      "inputs": {
+        "prompt": "{{prompt}}",
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "duration": "{{duration}}",
+        "fps": "{{fps}}",
+        "first_frame": "{{first_frame}}",
+        "last_frame": "{{last_frame}}",
+        "audio": "{{audio}}",
+        "link": ["3", 0]
+      }
+    },
+    "9": {
+      "class_type": "VideoCombine",
+      "inputs": {
+        "images": ["6", 0],
+        "fps": "{{fps}}",
+        "filename_prefix": "minimax_h3"
+      }
+    }
+  }
+}

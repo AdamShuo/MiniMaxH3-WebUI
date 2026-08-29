@@ -1,0 +1,46 @@
+# ───── Python ─────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ───── Secrets / 本地环境（绝不入库）─────
+.env
+.env.*
+*.local.env
+*.secret
+
+# ───── 权重与大体积数据（绝不入库）─────
+# LoRA / checkpoint 权重由用户在 GPU 实例上传
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+# 运行时生成的数据卷内容
+data/
+outputs/
+uploads/
+*.db
+*.sqlite
+*.sqlite3
+
+# ───── 编辑器 / 操作系统 ─────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+
+# ───── 日志 ─────
+*.log
+logs/
+
+# ───── 已导出的本地 H3 工作流（用户私有，勿提交）─────
+backend/workflows/h3_fl2v.user.json
