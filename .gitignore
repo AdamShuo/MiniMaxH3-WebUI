@@ -13,6 +13,8 @@ venv/
 .env.*
 *.local.env
 *.secret
+# 例外：.env.example 是用户复制用的模板，必须入库（否则 clone 后无法 cp）
+!.env.example
 
 # ───── 权重与大体积数据（绝不入库）─────
 # LoRA / checkpoint 权重由用户在 GPU 实例上传

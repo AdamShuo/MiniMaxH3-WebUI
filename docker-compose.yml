@@ -58,6 +58,18 @@ services:
     environment:
       # 本地 H3 直跑引擎默认开启（取代 ComfyUI server 依赖）
       - LOCAL_H3_ENABLED=${LOCAL_H3_ENABLED:-true}
+    # ── 关键修复：把宿主 GPU 透传给 worker ──
+    # 本地 H3 直跑引擎在 worker 容器内跑推理，必须见到显卡；
+    # 不声明这段，Docker 不会自动透传 GPU，容器内 nvidia-smi 为空，
+    # 引擎会直接失败或静默回退 MiniMax（数据出境）。
+    # 仅 ComfyUI 模式才需要 --profile gpu（见下方 comfyui 服务）。
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     volumes:
       - ./data:/data
       - ./models:/models:ro
