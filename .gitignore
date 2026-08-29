@@ -16,7 +16,11 @@ venv/
 
 # ───── 权重与大体积数据（绝不入库）─────
 # LoRA / checkpoint 权重由用户在 GPU 实例上传
-models/
+# 仅忽略权重文件，放行 models/ 下的目录结构与说明文档（占位用）
+models/**
+!models/**/
+!models/README.md
+!models/**/.gitkeep
 *.safetensors
 *.ckpt
 *.pt
