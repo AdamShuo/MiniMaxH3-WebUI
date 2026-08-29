@@ -38,8 +38,13 @@ def _resolve_frontend_dir() -> str | None:
 
 
 _FRONTEND_DIR = _resolve_frontend_dir()
-if _FRONTEND_DIR and _FRONTEND_DIR not in sys.path:
-    sys.path.insert(0, _FRONTEND_DIR)
+if _FRONTEND_DIR:
+    # `from frontend.app import build_ui` 需要 `frontend` 作为（namespace）包可被解析，
+    # 因此必须把它的 *父目录* 加入 sys.path（Docker 里靠 PYTHONPATH=/app 生效）。
+    # 把 frontend 目录本身加入是无效的。
+    _frontend_parent = os.path.dirname(_FRONTEND_DIR)
+    if _frontend_parent not in sys.path:
+        sys.path.insert(0, _frontend_parent)
 
 logging.basicConfig(level=settings.log_level)
 log = logging.getLogger("api")
