@@ -1,14 +1,17 @@
 # =====================================================================
-# MiniMax-H3 WebUI — 编排文件
+# MiniMax-H3 WebUI — 编排文件（单端口云端部署）
+#
+# 通用云端 GPU 推理方式：后端启动后暴露一个端口（此处 7860），
+# 用户直接访问 实例地址:7860 即可打开 WebUI。UI 与 API 同进程同源，
+# UI 通过相对路径调用 /api/v1/*，无需第二端口 / CORS。
 #
 # 零 GPU 快速体验（仅 MiniMax 兜底，需 MINIMAX_API_KEY）：
 #   docker compose up -d
 #
-# 含本地 ComfyUI 的 GPU 全功能（需 NVIDIA 容器运行时）：
-#   1) 把 LoRA 权重放入 ./models
-#   2) 把导出的 H3 工作流放到 backend/workflows/h3_fl2v.json
-#   3) 在 .env 中设 ENABLE_COMFYUI=true
-#   4) docker compose --profile gpu up -d
+# 含本地 H3 直跑推理（需 NVIDIA 容器运行时 + 权重）：
+#   1) 把模型权重放入 ./models（已挂载到 /models:ro）
+#   2) 在 .env 中设 LOCAL_H3_ENABLED=true（默认即开）
+#   3) docker compose up -d
 # =====================================================================
 
 services:
@@ -23,13 +26,15 @@ services:
       timeout: 5s
       retries: 5
 
+  # 后端 API + 挂载式 Gradio UI（单端口 7860）
   api:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file: .env
     ports:
-      - "8000:8000"
+      - "7860:7860"   # 云端暴露此端口，浏览器访问 <实例>:7860 即打开 WebUI
     volumes:
       - ./data:/data
       - ./models:/models:ro
@@ -37,20 +42,22 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:7860/healthz').status==200 else 1)"]
       interval: 15s
       timeout: 5s
       retries: 5
 
+  # RQ worker：本地 H3 直跑引擎在此容器内调用 inference/run_minimax_h3.py
   worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile.worker
     restart: unless-stopped
     command: rq worker --url ${REDIS_URL:-redis://redis:6379/0} default
     env_file: .env
     environment:
-      # ComfyUI 是否启用：GPU profile 下 .env 中 ENABLE_COMFYUI=true
-      - ENABLE_COMFYUI=${ENABLE_COMFYUI:-false}
+      # 本地 H3 直跑引擎默认开启（取代 ComfyUI server 依赖）
+      - LOCAL_H3_ENABLED=${LOCAL_H3_ENABLED:-true}
     volumes:
       - ./data:/data
       - ./models:/models:ro
@@ -58,18 +65,7 @@ services:
       redis:
         condition: service_healthy
 
-  frontend:
-    build:
-      context: ./frontend
-    restart: unless-stopped
-    environment:
-      - BACKEND_URL=http://api:8000
-    ports:
-      - "7860:7860"
-    depends_on:
-      - api
-
-  # ───── 可选：本地 ComfyUI（GPU profile 才启动）─────
+  # ───── 可选：独立 ComfyUI server（如果你仍想用 ComfyUI 模式）─────
   # 镜像需自带 MiniMax-H3 节点包；本仓库不内置，请使用你自己的 ComfyUI 镜像。
   comfyui:
     image: ${COMFYUI_IMAGE:-comfyanonymous/comfyui:latest}

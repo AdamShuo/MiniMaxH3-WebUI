@@ -1,0 +1,37 @@
+# RQ worker —— 本地 H3 直跑引擎运行环境（GPU 实例）。
+# 同时需要后端基础依赖（rq/redis/sqlalchemy/pydantic...）与重推理栈
+# （torch/transformers/comfy_kitchen...）。构建上下文为仓库根目录。
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# 1) 后端基础依赖
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install -r /app/requirements.txt
+
+# 2) 重推理栈（注意 +cu130 标签，需按实例 CUDA 改为 cu124/cu128，并配合 pytorch 额外索引）
+COPY inference/requirements-linux.txt /app/requirements-linux.txt
+RUN pip install -r /app/requirements-linux.txt \
+    --extra-index-url https://download.pytorch.org/whl/cu130
+
+COPY backend/app /app/app
+COPY inference /app/inference
+COPY comfy_core /app/comfy_core
+COPY prompt_guides /prompt_guides
+COPY reference /app/reference
+
+ENV DATA_ROOT=/data \
+    PROMPT_GUIDES_DIR=/prompt_guides \
+    RUNNER_SCRIPT=/app/inference/run_minimax_h3.py \
+    COMFY_CORE_DIR=/app/comfy_core \
+    FRONTEND_MOUNT=0 \
+    PYTHONPATH=/app
+
+EXPOSE 8000
+
+# 本地 H3 直跑引擎通过子进程调用 run_minimax_h3.py，运行在本容器内。
+CMD ["rq", "worker", "--url", "${REDIS_URL:-redis://redis:6379/0}", "default"]

@@ -119,7 +119,8 @@ def set_attention_backend(backend: str):
 
     The sealed ``MiniMaxH3EasyAttentionBackend`` node mapped a dropdown to a
     comfy attention function. We apply the same global switch comfy uses.
-    backend: 'torch' | 'sageattention' | 'xformers'
+    backend: 'torch' | 'sageattention' | 'xformers' | 'comfy_kitchen' /
+             'comfy_kitchen_int8' / 'kitchen'
     """
     import comfy.ldm.modules.attention as attn
     backend = (backend or "torch").lower()
@@ -127,6 +128,12 @@ def set_attention_backend(backend: str):
         attn.attention_function = attn.sage_attention
     elif backend == "xformers" and hasattr(attn, "xformers_attention"):
         attn.attention_function = attn.xformers_attention
+    elif backend in ("comfy_kitchen", "comfy_kitchen_int8", "kitchen"):
+        # comfy_kitchen is vendored in comfy_core/comfy/ldm/modules/attention.py
+        # (registers comfy_kitchen_int8). It does NOT depend on the ComfyUI
+        # server/node-graph — works headless. Falls back to default if unavailable.
+        fn = attn.get_attention_function("comfy_kitchen_int8", default=attn.default_attention)
+        attn.attention_function = fn
     else:
         attn.attention_function = attn.default_attention
     print(f"[attention] backend = {backend}")
@@ -178,6 +185,70 @@ def apply_lora(model, clip, lora_name, strength):
     model, clip = load_lora_for_models(model, clip, lora_path, strength, 0.0)
     print(f"[lora] applied {lora_name} (strength={strength})")
     return model, clip
+
+
+# ---------------------------------------------------------------------------
+# 5b. [#RECONSTRUCTED] Reference media loading (sealed-capai media bridge path)
+# ---------------------------------------------------------------------------
+def _load_image(path: str):
+    """Load a reference image into a [1,3,H,W] float tensor in [0,1]."""
+    from PIL import Image
+    import torch
+    import torchvision.transforms.functional as TF  # noqa: F401  (lazy import hints)
+    img = Image.open(path).convert("RGB")
+    t = torch.from_numpy(__import__("numpy").asarray(img)).float().permute(2, 0, 1) / 255.0
+    return t.unsqueeze(0)  # [1,3,H,W]
+
+
+def _load_audio(path: str):
+    """Load reference audio into a [1,2? ,L] tensor via torchaudio."""
+    import torchaudio
+    wav, sr = torchaudio.load(path)
+    return wav.unsqueeze(0)  # [1,C,L]
+
+
+def _load_video(path: str):
+    """Load reference video frames into a [F,3,H,W] float tensor in [0,1]."""
+    import imageio.v2 as imageio
+    import torch
+    frames = []
+    reader = imageio.get_reader(path)
+    for f in reader:
+        from PIL import Image
+        im = Image.fromarray(f).convert("RGB")
+        t = torch.from_numpy(__import__("numpy").asarray(im)).float().permute(2, 0, 1) / 255.0
+        frames.append(t)
+    reader.close()
+    if not frames:
+        raise RuntimeError(f"no frames decoded from video: {path}")
+    return torch.stack(frames, dim=0)  # [F,3,H,W]
+
+
+def build_media_bundle(ref_images, audios, videos):
+    """[#RECONSTRUCTED] Pack reference files into a MiniMaxH3MediaBundle.
+
+    The original ``MiniMaxH3EasyMediaBridge.pack`` consumed already-decoded
+    tensors; here we decode from disk and pass them through. The exact tensor
+    layout/normalisation the H3 text-encoder + VAE expect is the #1 GPU
+    validation risk (flagged in the file header) — this is the best-effort
+    reconstruction. Returns the bundle object or None when no media supplied.
+    """
+    imgs = [_load_image(p) for p in (ref_images or [])]
+    vids = [_load_video(p) for p in (videos or [])]
+    aus = [_load_audio(p) for p in (audios or [])]
+    if not (imgs or vids or aus):
+        return None
+    kwargs = {}
+    for i, t in enumerate(imgs, 1):
+        kwargs[f"image_{i}"] = t
+    for i, t in enumerate(vids, 1):
+        kwargs[f"video_{i}"] = t
+    for i, t in enumerate(aus, 1):
+        kwargs[f"audio_{i}"] = t
+    return MiniMaxH3EasyMediaBridge().pack(
+        image_count=len(imgs), video_count=len(vids), audio_count=len(aus),
+        **kwargs,
+    )[0]
 
 
 # ---------------------------------------------------------------------------
@@ -285,13 +356,28 @@ def save_video(frames, wav, fps, out_path, audio_sr=32000):
     print(f"[save] wrote {out_path}")
 
 
+def _apply_all_loras(model, clip, loras):
+    """Apply a list of LoRA specs [{name, strength}] onto the model+clip."""
+    for spec in (loras or []):
+        if isinstance(spec, dict):
+            name = spec.get("name")
+            strength = float(spec.get("strength", 1.0))
+        else:
+            name, strength = spec, 1.0
+        if name:
+            model, clip = apply_lora(model, clip, name, strength)
+    return model, clip
+
+
 # ---------------------------------------------------------------------------
 # 9. Single-pass orchestration
 # ---------------------------------------------------------------------------
 def run_single_pass(cfg):
     bundle = build_bundle(cfg)
-    model, positive, latent, video_vae, audio_vae, fps = prepare_conditioning(bundle, cfg)
-    if cfg.get("lora"):
+    media = build_media_bundle(cfg.get("ref_images"), cfg.get("audios"), cfg.get("videos"))
+    model, positive, latent, video_vae, audio_vae, fps = prepare_conditioning(bundle, cfg, media=media)
+    model, _ = _apply_all_loras(model, bundle.clip, cfg.get("loras"))
+    if cfg.get("lora") and not cfg.get("loras"):  # legacy single-lora field
         model, _ = apply_lora(model, bundle.clip, cfg["lora"], cfg.get("lora_strength", 1.0))
     set_attention_backend(cfg.get("attention", "torch"))
     samples = sample_h3(model, positive, latent, cfg)
@@ -306,8 +392,10 @@ def run_single_pass(cfg):
 def run_pass2(cfg, cfg2):
     # --- pass 1: low-resolution base generation ---
     bundle = build_bundle(cfg)
-    m1, p1, lat1, vvae1, avae1, fps = prepare_conditioning(bundle, cfg)
-    if cfg.get("lora"):
+    media = build_media_bundle(cfg.get("ref_images"), cfg.get("audios"), cfg.get("videos"))
+    m1, p1, lat1, vvae1, avae1, fps = prepare_conditioning(bundle, cfg, media=media)
+    m1, _ = _apply_all_loras(m1, bundle.clip, cfg.get("loras"))
+    if cfg.get("lora") and not cfg.get("loras"):
         m1, _ = apply_lora(m1, bundle.clip, cfg["lora"], cfg.get("lora_strength", 1.0))
     set_attention_backend(cfg.get("attention", "torch"))
     s1 = sample_h3(m1, p1, lat1, cfg)
@@ -327,6 +415,9 @@ def run_pass2(cfg, cfg2):
     # load the REF2VA W4A8 model for the upscaled second pass
     bundle2 = build_bundle(cfg2)
     m2, _, lat2b, vvae2b, avae2b, fps2 = prepare_conditioning(bundle2, cfg2)
+    m2, _ = _apply_all_loras(m2, bundle2.clip, cfg2.get("loras"))
+    if cfg2.get("lora") and not cfg2.get("loras"):
+        m2, _ = apply_lora(m2, bundle2.clip, cfg2["lora"], cfg2.get("lora_strength", 1.0))
     set_attention_backend(cfg2.get("attention", "torch"))
     s2 = sample_h3(m2, second_pass_positive, lat2b, cfg2)
     frames2, wav2 = decode_av(vvae2b, avae2b, s2)
@@ -377,6 +468,12 @@ DEFAULT_CFG = {
     "lora": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
     "lora_strength": 1.0,
     "attention": "torch",
+    # reference media (file paths; consumed by build_media_bundle -> media bridge)
+    "ref_images": [],
+    "audios": [],
+    "videos": [],
+    # multi-LoRA: list of {"name": str, "strength": float}
+    "loras": [],
     # model filenames (resolved under ./models via folder_paths)
     "fl2va_model": "minimax_h3_fl2v_preview.safetensors",
     "ref2va_model": "minimax_h3_fl2va_pruned_w4a8_mixed.safetensors",
@@ -402,6 +499,11 @@ def load_cfg(args):
         v = getattr(args, k, None)
         if v is not None:
             cfg[k] = v
+    # reference media + multi-LoRA (lists; may come from CLI or --config)
+    for k in ("ref_images", "audios", "videos", "loras"):
+        v = getattr(args, k, None)
+        if v:
+            cfg[k] = v
     if cfg["seed"] is None or cfg["seed"] < 0:
         cfg["seed"] = int(torch.randint(0, 2**31 - 1, (1,)).item())
     return cfg
@@ -426,11 +528,41 @@ def main():
     ap.add_argument("--attention", default=None)
     ap.add_argument("--ref-image-1", default=None, help="reference image path")
     ap.add_argument("--audio-1", default=None, help="reference audio path")
+    ap.add_argument("--ref-images", nargs="*", default=None,
+                    help="reference image paths (up to 9)")
+    ap.add_argument("--audios", nargs="*", default=None,
+                    help="reference audio paths (up to 3)")
+    ap.add_argument("--videos", nargs="*", default=None,
+                    help="reference video paths (up to 3)")
+    ap.add_argument("--loras", nargs="*", default=None,
+                    help="LoRA specs as name:strength pairs, e.g. lora.safetensors:0.8")
     ap.add_argument("--output", default=None)
     ap.add_argument("--pass2-config", default=None, help="second-pass JSON config")
     ap.add_argument("--check", action="store_true",
                     help="only validate that all imports resolve, then exit")
     args = ap.parse_args()
+
+    # normalize LoRA specs "name:strength" -> {"name", "strength"}
+    if args.loras:
+        parsed = []
+        for s in args.loras:
+            if ":" in s:
+                n, st = s.rsplit(":", 1)
+                try:
+                    st = float(st)
+                except ValueError:
+                    st = 1.0
+            else:
+                n, st = s, 1.0
+            parsed.append({"name": n, "strength": st})
+        args.loras = parsed
+    else:
+        args.loras = None
+    # legacy single reference shortcuts -> lists
+    if args.ref_image_1 and not args.ref_images:
+        args.ref_images = [args.ref_image_1]
+    if args.audio_1 and not args.audios:
+        args.audios = [args.audio_1]
 
     folder_paths.init_folders()
 

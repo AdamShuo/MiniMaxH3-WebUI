@@ -13,10 +13,20 @@ from __future__ import annotations
 from .base import BaseEngine
 from .comfyui import ComfyUIEngine
 from .minimax import MiniMaxEngine
+from .local_h3 import LocalH3Engine
 
 
 def build_engines(**kw) -> dict[str, BaseEngine]:
     engines: dict[str, BaseEngine] = {}
+    # 本地 H3 直跑引擎（默认开启，取代 ComfyUI server 依赖）
+    if kw.get("local_h3_enabled"):
+        engines["local_h3"] = LocalH3Engine(
+            runner_script=kw["runner_script"],
+            comfy_core_dir=kw["comfy_core_dir"],
+            inference_python=kw["inference_python"],
+            outputs_dir=kw["outputs_dir"],
+            attention_backend=kw.get("h3_attention_backend", "torch"),
+        )
     if kw.get("comfyui_url"):
         engines["comfyui"] = ComfyUIEngine(
             base_url=kw["comfyui_url"],
@@ -35,18 +45,27 @@ def build_engines(**kw) -> dict[str, BaseEngine]:
 
 
 def decide_primary(force_engine: str | None, use_fallback: bool,
-                   has_comfyui: bool, has_minimax: bool) -> str:
+                   has_comfyui: bool, has_minimax: bool,
+                   has_local_h3: bool = False) -> str:
     if force_engine == "minimax":
         if not has_minimax:
             raise RuntimeError("强制 MiniMax 兜底，但未配置 MINIMAX_API_KEY (BD-03)")
         return "minimax"
+    if force_engine == "local_h3":
+        if has_local_h3:
+            return "local_h3"
+        if use_fallback and has_minimax:
+            return "minimax"
+        raise RuntimeError("强制本地 H3，但本地直跑引擎不可用 (BD-03)")
     if force_engine == "comfyui":
         if has_comfyui:
             return "comfyui"
         if use_fallback and has_minimax:
             return "minimax"
         raise RuntimeError("强制本地 ComfyUI，但本地引擎不可用 (BD-03)")
-    # auto
+    # auto：优先本地 H3 直跑，其次 ComfyUI，再次 MiniMax 兜底
+    if has_local_h3:
+        return "local_h3"
     if has_comfyui:
         return "comfyui"
     if use_fallback and has_minimax:

@@ -48,6 +48,7 @@ def create_generation(req: GenerationCreateRequest, db: Session = Depends(get_db
         mode=req.mode or "reference",
         first_stage_resolution=req.first_stage_resolution or "360P",
         loras=json.dumps([s.model_dump() for s in req.loras]),
+        optimize_method=req.optimize_method or "builtin",
         step=req.step,
         seed=req.seed,
         width=req.width,
@@ -106,7 +107,7 @@ def submit_generation(
     task = Task(
         generation_request_id=gen.id,
         tenant_id=gen.tenant_id,
-        engine="comfyui",  # 占位，worker 在 _run 中按路由重写
+        engine="local_h3",  # 占位，worker 在 _run 中按路由重写
         status="PENDING",
         progress=0,
         retry_count=0,

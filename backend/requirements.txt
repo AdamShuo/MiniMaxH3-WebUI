@@ -8,3 +8,6 @@ rq==2.0.0
 httpx==0.28.1
 python-multipart==0.0.20
 Pillow==11.0.0
+# Gradio 用于把 WebUI 挂载到后端单端口（云端访问 <实例>:7860）
+gradio==5.9.0
+requests==2.32.3

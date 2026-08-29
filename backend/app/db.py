@@ -36,6 +36,43 @@ def init_db() -> None:
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    # SQLite's create_all never ALTERs existing tables, so columns added to the
+    # ORM after a DB was first created would raise on INSERT. Migrate idempotently.
+    migrate_db()
+
+
+def migrate_db() -> None:
+    """Idempotently add columns that exist in the ORM but may be missing from a
+    previously-created SQLite (or Postgres) table.
+
+    Each entry is (table, column, ADD COLUMN clause). We read the live column
+    list via PRAGMA (SQLite) / information_schema is not portable, but for our
+    SQLite-first store PRAGMA covers the deployment default; Postgres callers
+    should run Alembic instead — this guard still no-ops safely there because
+    the PRAGMA query is wrapped in try/except.
+    """
+    from sqlalchemy import text
+
+    expected = [
+        ("t_generation_request", "mode", "VARCHAR(32) NOT NULL DEFAULT 'reference'"),
+        ("t_generation_request", "first_stage_resolution", "VARCHAR(16) NOT NULL DEFAULT '360P'"),
+        ("t_generation_request", "video_asset_ids", "TEXT"),
+        ("t_generation_request", "loras", "TEXT"),
+        ("t_generation_request", "optimize_method", "VARCHAR(16) NOT NULL DEFAULT 'builtin'"),
+    ]
+    try:
+        with engine.begin() as conn:
+            for table, col, ddl in expected:
+                try:
+                    rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+                except Exception:
+                    # Not SQLite or table missing — skip (e.g. Postgres path).
+                    continue
+                existing = {r[1] for r in rows}
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+    except Exception as e:  # pragma: no cover — never block startup on migrate
+        logging.getLogger("db").warning("migrate_db skipped: %s", e)
 
 
 def get_db() -> Generator[Session, None, None]:

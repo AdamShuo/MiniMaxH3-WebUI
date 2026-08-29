@@ -64,6 +64,8 @@ class GenerationCreateRequest(BaseModel):
     first_stage_resolution: str = Field(default="360P", description="360P | 540P | 720P | 1080P")
     # LoRA（最多 6 个，每个带强度）
     loras: list[LoRASpec] = Field(default_factory=list)
+    # 提示词优化方式：builtin（使用同实例 H3 文本编码，不经第三方）| third_party（第三方 API）
+    optimize_method: str = Field(default="builtin", description="builtin | third_party")
     step: int = 8
     seed: int = -1
     width: int = 1376
@@ -88,6 +90,7 @@ class GenerationRequestVO(BaseModel):
     mode: str = "reference"
     first_stage_resolution: str = "360P"
     loras: Optional[Any] = None
+    optimize_method: str = "builtin"
     step: int
     seed: int
     width: int

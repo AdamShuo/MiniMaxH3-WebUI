@@ -27,6 +27,11 @@ def run_generation(task_id: int) -> None:
 
 def _engines():
     return build_engines(
+        local_h3_enabled=settings.local_h3_enabled,
+        runner_script=settings.runner_script,
+        comfy_core_dir=settings.comfy_core_dir,
+        inference_python=settings.inference_python,
+        h3_attention_backend=settings.h3_attention_backend,
         comfyui_url=settings.comfyui_url if _comfyui_configured() else None,
         workflow_path=settings.workflow_path,
         models_dir=settings.models_dir,
@@ -54,8 +59,10 @@ async def _run(task_id: int) -> None:
             log.warning("task %s not pending, skip", task_id)
             return
         gen = db.get(GenerationRequest, task.generation_request_id)
+        has_local_h3 = "local_h3" in engines
         task.status = "RUNNING"
-        task.engine = decide_primary(task.force_engine, gen.use_fallback, has_comfyui, has_minimax)
+        task.engine = decide_primary(
+            task.force_engine, gen.use_fallback, has_comfyui, has_minimax, has_local_h3)
         db.commit()
 
         params = GenParams(
@@ -68,8 +75,9 @@ async def _run(task_id: int) -> None:
             video_paths=_reference_paths(db, gen.video_asset_ids, media="video"),
             loras=_parse_loras(db, gen.loras),
         )
-        ref_paths = _reference_paths(db, gen.reference_asset_ids)
+        image_paths = _reference_paths(db, gen.reference_asset_ids, media="image")
         audio_paths = _reference_paths(db, gen.reference_asset_ids, media="audio")
+        video_paths = _reference_paths(db, gen.video_asset_ids, media="video")
 
         async def progress_cb(progress: int, stage=None, message=None):
             _record_progress(db, task, progress, stage, message)
@@ -78,18 +86,30 @@ async def _run(task_id: int) -> None:
         try:
             result = await engine.generate(
                 prompt=gen.optimized_prompt or "",
-                params=params, reference_paths=ref_paths, audio_paths=audio_paths,
+                params=params, reference_paths=image_paths, audio_paths=audio_paths,
+                video_paths=video_paths,
                 progress_cb=progress_cb, task_id=task.id,
             )
         except Exception as e:  # local fail -> fallback (BD-02)
             log.warning("engine %s failed: %s", task.engine, e)
-            if task.engine == "comfyui" and has_minimax and gen.use_fallback:
+            if task.engine == "local_h3" and has_minimax and gen.use_fallback:
                 task.engine = "minimax"
                 db.commit()
                 log.info("switching to MiniMax fallback for task %s", task_id)
                 result = await engines["minimax"].generate(
                     prompt=gen.optimized_prompt or "", params=params,
-                    reference_paths=ref_paths, audio_paths=audio_paths,
+                    reference_paths=image_paths, audio_paths=audio_paths,
+                    video_paths=video_paths,
+                    progress_cb=progress_cb, task_id=task.id,
+                )
+            elif task.engine == "comfyui" and has_minimax and gen.use_fallback:
+                task.engine = "minimax"
+                db.commit()
+                log.info("switching to MiniMax fallback for task %s", task_id)
+                result = await engines["minimax"].generate(
+                    prompt=gen.optimized_prompt or "", params=params,
+                    reference_paths=image_paths, audio_paths=audio_paths,
+                    video_paths=video_paths,
                     progress_cb=progress_cb, task_id=task.id,
                 )
             else:

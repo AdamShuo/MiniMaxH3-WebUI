@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     )
     h3_lora_strength: float = Field(default=1.0, alias="H3_LORA_STRENGTH")
 
+    # --- 本地 H3 直跑引擎（取代 ComfyUI server 适配）---
+    # 默认开启：直接子进程调用 inference/run_minimax_h3.py（vendored comfy_core）。
+    local_h3_enabled: bool = Field(default=True, alias="LOCAL_H3_ENABLED")
+    runner_script: str = Field(
+        default="/app/inference/run_minimax_h3.py", alias="RUNNER_SCRIPT")
+    comfy_core_dir: str = Field(default="/app/comfy_core", alias="COMFY_CORE_DIR")
+    inference_python: str = Field(default="python", alias="INFERENCE_PYTHON")
+    # 注意力后端：torch | sageattention | xformers | comfy_kitchen_int8
+    h3_attention_backend: str = Field(default="torch", alias="H3_ATTENTION_BACKEND")
+
     # --- generation defaults (L1) ---
     default_step: int = 8
     default_seed: int = -1

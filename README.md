@@ -58,33 +58,35 @@ cp .env.example .env
 # 编辑 .env，填入 MINIMAX_API_KEY（区域默认新加坡，见 H-04 合规提示）
 
 docker compose up -d
-#   api      -> http://localhost:8000  (Swagger: /docs)
-#   frontend -> http://localhost:7860
-#   worker   -> 后台消费队列
+#   单端口：后端 API + Gradio UI 同进程，统一暴露 7860
+#   -> http://localhost:7860  （WebUI，Swagger 文档在 /docs）
+#   worker -> 后台消费队列（GPU 实例上调用 inference/run_minimax_h3.py 直跑）
 ```
 
-打开 `http://localhost:7860`：填提示词 → 可选「优化提示词」→ 选参数/参考图/音频 →
-「提交生成」→ 轮询进度 → 视频直接播放，画廊可回看下载。
+打开 `http://localhost:7860`：填提示词 → 选「提示词优化方式」（同实例 H3 文本编码
+或第三方 API）→ 选参数/参考图/音频/视频 →「开始生成」→ 轮询进度 → 视频直接播放，
+画廊可回看下载。
 
 ---
 
-## 3. GPU 全功能（本地 ComfyUI 主引擎）
+## 3. GPU 全功能（本地 H3 直跑引擎，默认主引擎）
+
+本仓库**不再依赖 ComfyUI server**。后端 worker 通过子进程直接调用
+`inference/run_minimax_h3.py`（复用 vendored `comfy_core/` 内核 + 本地权重），
+在 GPU 实例上生成带音频视频。ComfyUI 仅作为可选兜底存在。
 
 在**含 GPU 的 Linux 实例**上：
 
-1. **上传权重**：把 LoRA 放到 `./models/`
-   （默认文件名 `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors`，
-   可用 `H3_LORA_NAME` 覆盖）。
-2. **导出 H3 工作流**：从你装好 MiniMax-H3 节点包的 ComfyUI 导出工作流，
-   替换 `backend/workflows/h3_fl2v.json`。保留其中的 `{{placeholder}}` 占位符
-   （`{{prompt}} {{seed}} {{steps}} {{width}} {{height}} {{duration}} {{fps}}
-    {{lora_name}} {{lora_strength}} {{first_frame}} {{last_frame}} {{audio}}`），
-   适配器会在提交时注入实际值。
-   > 说明（R-01 / U-02）：原 `capai.exe` 的 H3 节点图不可程序化提取，工作流须由你自行导出，
-   > 仓库仅提供占位**模板**。
-3. **启用 ComfyUI**：在 `.env` 设 `ENABLE_COMFYUI=true`，并准备一个自带 H3 节点包的
-   ComfyUI 镜像（通过 `COMFYUI_IMAGE` 指定，默认 `comfyanonymous/comfyui:latest`）。
-4. **启动（gpu profile）**：
+1. **放置权重**：把 H3 模型 / VAE / 文本编码器 / LoRA 放到 `./models/`
+   （默认文件名见 `inference/run_minimax_h3.py` 的 `DEFAULT_CFG`，LoRA 可用
+   `H3_LORA_NAME` 覆盖；`MODELS_DIR` 通过环境变量指向权重目录）。
+2. **开启本地引擎**：`.env` 中 `LOCAL_H3_ENABLED=true`（默认值即开）。
+   可设 `RUNNER_SCRIPT` / `COMFY_CORE_DIR` / `INFERENCE_PYTHON` / `H3_ATTENTION_BACKEND`
+   调整运行方式（注意力后端支持 `torch` / `sageattention` / `xformers` /
+   `comfy_kitchen_int8`）。
+3. **（可选）启用独立 ComfyUI 兜底**：如需，`.env` 设 `ENABLE_COMFYUI=true` 并准备
+   自带 H3 节点包的 ComfyUI 镜像（通过 `COMFYUI_IMAGE` 指定）。
+4. **启动**：
    ```bash
    docker compose --profile gpu up -d
    ```
@@ -140,17 +142,18 @@ Gen 参数与提示词默认不离开本地；仅兜底链路涉及出境。生�
 ## 8. 本地开发（不依赖 Docker）
 
 ```bash
-# 后端
+# 后端 + 挂载式 Gradio UI（单端口 7860）
 python -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt
-cd backend && uvicorn app.main:app --reload --port 8000
+cd backend && uvicorn app.main:app --reload --port 7860
+# 浏览器打开 http://localhost:7860 即 WebUI（UI 通过同源 /api/v1 调用后端）
 
-# worker（另一终端）
+# worker（另一终端，GPU 机器需额外装推理栈：pip install -r inference/requirements-linux.txt）
 rq worker --url redis://localhost:6379/0 default
 
-# 前端
-pip install -r frontend/requirements.txt
-BACKEND_URL=http://localhost:8000 python frontend/app.py
+# 仅前端独立开发（不挂载进后端，需单独跑 API 在 8000）：
+#   pip install -r frontend/requirements.txt
+#   BACKEND_URL=http://localhost:8000 python frontend/app.py
 ```
 
 ---

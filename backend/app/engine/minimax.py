@@ -39,6 +39,7 @@ class MiniMaxEngine(BaseEngine):
         params: GenParams,
         reference_paths: list[str],
         audio_paths: list[str],
+        video_paths: Optional[list[str]] = None,
         progress_cb: ProgressCB,
         task_id: int,
     ) -> EngineResult:
