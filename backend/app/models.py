@@ -67,6 +67,9 @@ class GenerationRequest(Base):
     optimize_method: Mapped[str] = mapped_column(
         String(16), default="builtin", nullable=False
     )  # builtin | third_party
+    text_encoder: Mapped[str] = mapped_column(
+        String(255), default="clip", nullable=False
+    )  # clip | text_encoding/qwen3vl_32b_minimax_h3_int8_convrot.safetensors
     step: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     seed: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
     width: Mapped[int] = mapped_column(Integer, default=1376, nullable=False)

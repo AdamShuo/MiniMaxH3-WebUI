@@ -85,6 +85,7 @@ def migrate_db() -> None:
         ("t_generation_request", "video_asset_ids", "TEXT"),
         ("t_generation_request", "loras", "TEXT"),
         ("t_generation_request", "optimize_method", "VARCHAR(16) NOT NULL DEFAULT 'builtin'"),
+        ("t_generation_request", "text_encoder", "VARCHAR(255) NOT NULL DEFAULT 'clip'"),
         ("t_generation_request", "template_key", "VARCHAR(64)"),
     ]
     try:

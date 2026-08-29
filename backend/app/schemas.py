@@ -75,6 +75,11 @@ class GenerationCreateRequest(BaseModel):
     loras: list[LoRASpec] = Field(default_factory=list)
     # 提示词优化方式：builtin（使用同实例 H3 文本编码，不经第三方）| third_party（第三方 API）
     optimize_method: str = Field(default="builtin", description="builtin | third_party")
+    # 内置文本编码器：clip | text_encoding/qwen3vl_32b_minimax_h3_int8_convrot.safetensors
+    text_encoder: str = Field(
+        default="clip",
+        description="内置 CLIP 或 text_encoding 下的 Qwen3VL 32B int8 convrot 权重",
+    )
     step: int = 8
     seed: int = -1
     width: int = 1376
@@ -101,6 +106,7 @@ class GenerationRequestVO(BaseModel):
     first_stage_resolution: str = "360P"
     loras: Optional[Any] = None
     optimize_method: str = "builtin"
+    text_encoder: str = "clip"
     step: int
     seed: int
     width: int

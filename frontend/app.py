@@ -31,6 +31,24 @@ POLL_INTERVAL = 3
 MODES = ["reference", "first_frame", "dual_stage"]
 RESOLUTIONS = ["360P", "540P", "720P", "1080P"]
 OPT_METHODS = [("内置clip优化", "builtin"), ("第三方API优化", "third_party")]
+# 内置文本编码器：CLIP 或 text_encoding 下的 Qwen3VL 32B int8 convrot 权重
+TEXT_ENCODERS = [
+    ("CLIP", "clip"),
+    ("Qwen3VL 32B (int8 convrot)",
+     "text_encoding/qwen3vl_32b_minimax_h3_int8_convrot.safetensors"),
+]
+# 8 个官方风格提示词模板（来自原版 BatchGenerator 内置灵感库）；选中后填入提示词框
+STYLE_TEMPLATES = [
+    ("柯基犬樱花", "一只可爱的柯基犬在樱花树下奔跑,阳光明媚,高清摄影,8K"),
+    ("日落海景", "美丽的日落风景,金色阳光洒在海面上,波光粼粼"),
+    ("高山湖泊", "高山湖泊,倒影清晰,蓝天白云,雪山环绕"),
+    ("赛博朋克夜景", "城市夜景,霓虹闪烁,车流如织,赛博朋克风格"),
+    ("森林小径", "森林小径,阳光斑驳,秋叶纷飞,宁静祥和"),
+    ("星空银河", "梦幻的星空银河,宇宙深处,星云璀璨"),
+    ("热带雨林", "热带雨林,瀑布飞流,绿色植被,生机勃勃"),
+    ("雪山云海", "雪山之巅,云海翻腾,日出金光,壮丽景色"),
+]
+STYLE_PROMPT_MAP = {f"style_{i+1}": p for i, (_, p) in enumerate(STYLE_TEMPLATES)}
 MAX_LORA = 6
 MAX_IMAGE = 9
 MAX_AUDIO = 3
@@ -73,25 +91,44 @@ def upload_one(path: str, media_type: str | None = None) -> int | None:
 
 
 def load_templates() -> list[dict]:
-    """加载提示词模板列表，返回 [{label, key, is_scene}]。"""
+    """加载提示词模板列表，返回 [{label, key, is_scene, style}]。
+
+    包含后端提供的 H3 通用 + 8 个官方场景指南，以及前端内置的 8 个官方风格
+    提示词模板（选中后直接填入提示词框）。
+    """
+    items = []
     try:
         r = _get("/api/v1/prompt-templates")
         if r.ok:
-            items = []
             for t in r.json():
                 key = t["template_key"]
-                if key == "none":
+                if key in ("none", "h3_general"):
                     continue
                 label = f"{t['name_zh'] or t['name']} ({key})"
                 items.append({
                     "label": label,
                     "key": key,
-                    "is_scene": key != "h3_general",
+                    "is_scene": True,
+                    "style": False,
                 })
-            return items
     except Exception:
         pass
-    return [{"label": "H3 通用 (h3_general)", "key": "h3_general", "is_scene": False}]
+    # 始终保留 H3 通用作为默认
+    items.insert(0, {
+        "label": "H3 通用 (h3_general)",
+        "key": "h3_general",
+        "is_scene": False,
+        "style": False,
+    })
+    # 官方风格提示词模板（前端内置）
+    for i, (name, prompt) in enumerate(STYLE_TEMPLATES, 1):
+        items.append({
+            "label": f"风格·{name}",
+            "key": f"style_{i}",
+            "is_scene": False,
+            "style": True,
+        })
+    return items
 
 
 def load_loras() -> list[str]:
@@ -167,12 +204,14 @@ def optimize(prompt, template_key, method):
     """点击「优化提示词」后的处理：第三方走后端 optimize，内置暂时原样返回。"""
     if not prompt or not prompt.strip():
         return prompt
+    # 风格模板只负责填入提示词，不作为场景指南传给优化器
+    scene_key = None if (template_key and template_key.startswith("style_")) else template_key
     if method != "third_party":
         # 内置 CLIP 优化：当前尚未接入真实 H3/CLIP 文本编码优化，原样返回。
         return prompt
     try:
         r = _post(f"/api/v1/prompt-templates/0/optimize",
-                  json={"prompt": prompt, "template_key": template_key})
+                  json={"prompt": prompt, "template_key": scene_key})
         if r.ok:
             return r.json().get("optimized_prompt", prompt)
     except Exception:
@@ -181,12 +220,15 @@ def optimize(prompt, template_key, method):
 
 
 def submit(prompt, template_key, image_paths, audio_paths, video_paths,
-           mode, resolution, optimize_method,
+           mode, resolution, optimize_method, text_encoder,
            lora_names, lora_strengths,
            step, seed, width, height, duration, fps,
            progress=gr.Progress()):
     if not prompt or not prompt.strip():
         return "⚠️ 请填写提示词", None, gr.update()
+
+    # 风格模板只负责填入提示词，不作为场景指南传给后端
+    backend_template_key = "none" if (template_key and template_key.startswith("style_")) else (template_key or "none")
 
     # 1) 上传参考素材（按小窗顺序）
     ref_ids, vid_ids = [], []
@@ -214,12 +256,13 @@ def submit(prompt, template_key, image_paths, audio_paths, video_paths,
     # 3) 创建生成请求
     body = {
         "prompt": prompt,
-        "template_key": template_key,
+        "template_key": backend_template_key,
         "reference_asset_ids": ref_ids,
         "video_asset_ids": vid_ids,
         "mode": mode,
         "first_stage_resolution": resolution,
         "optimize_method": optimize_method or "builtin",
+        "text_encoder": text_encoder or "clip",
         "loras": loras,
         "step": int(step), "seed": int(seed), "width": int(width),
         "height": int(height), "duration": int(duration), "fps": int(fps),
@@ -266,12 +309,13 @@ def submit_from_ui(*args, progress=gr.Progress()):
     audio_paths = [p for p in args[2 + MAX_IMAGE:2 + MAX_IMAGE + MAX_AUDIO] if p]
     video_paths = [p for p in args[2 + MAX_IMAGE + MAX_AUDIO:2 + MAX_IMAGE + MAX_AUDIO + MAX_VIDEO] if p]
     base = 2 + MAX_IMAGE + MAX_AUDIO + MAX_VIDEO
-    mode, resolution, optimize_method = args[base], args[base + 1], args[base + 2]
-    lora_names = list(args[base + 3:base + 3 + MAX_LORA])
-    lora_strengths = list(args[base + 3 + MAX_LORA:base + 3 + 2 * MAX_LORA])
-    step, seed, width, height, duration, fps = args[base + 3 + 2 * MAX_LORA:base + 9 + 2 * MAX_LORA]
+    mode, resolution, optimize_method, text_encoder = (
+        args[base], args[base + 1], args[base + 2], args[base + 3])
+    lora_names = list(args[base + 4:base + 4 + MAX_LORA])
+    lora_strengths = list(args[base + 4 + MAX_LORA:base + 4 + 2 * MAX_LORA])
+    step, seed, width, height, duration, fps = args[base + 4 + 2 * MAX_LORA:base + 10 + 2 * MAX_LORA]
     return submit(prompt, tmpl, image_paths, audio_paths, video_paths,
-                  mode, resolution, optimize_method,
+                  mode, resolution, optimize_method, text_encoder,
                   lora_names, lora_strengths,
                   step, seed, width, height, duration, fps, progress)
 
@@ -290,7 +334,7 @@ def refresh_gallery():
 def reset_defaults():
     """恢复默认：返回所有参数控件默认值。"""
     return (
-        DEFAULTS["mode"], DEFAULTS["resolution"], DEFAULTS["optimize_method"],
+        DEFAULTS["mode"], DEFAULTS["resolution"], DEFAULTS["optimize_method"], "clip",
         *([None] * MAX_LORA), *([1.0] * MAX_LORA),
         DEFAULTS["step"], DEFAULTS["seed"], DEFAULTS["width"],
         DEFAULTS["height"], DEFAULTS["duration"], DEFAULTS["fps"],
@@ -365,6 +409,13 @@ def build_ui():
                                 value=DEFAULTS["optimize_method"],
                                 allow_custom_value=False,
                             )
+                            text_encoder = gr.Dropdown(
+                                label="内置文本编码器",
+                                choices=TEXT_ENCODERS,
+                                value="clip",
+                                allow_custom_value=False,
+                                visible=(DEFAULTS["optimize_method"] == "builtin"),
+                            )
                             api_settings_btn = gr.Button(
                                 "第三方API设置", size="sm", visible=False)
                             optimize_btn = gr.Button("✨ 优化提示词")
@@ -374,7 +425,8 @@ def build_ui():
                         optimize_note = gr.Markdown(
                             "当前：内置 CLIP 优化（数据不出本机；未接入真实编码器前为原样返回）")
 
-                        # 第三方 API 设置弹窗（模拟对话框）
+                        # 第三方 API 设置面板（默认隐藏，仅点击按钮或选第三方API时弹出，
+                        # 切回内置优化即自动收起，避免 API 密钥常驻主界面导致外泄）
                         with gr.Column(visible=False, elem_id="api-settings-panel") as api_settings_panel:
                             gr.Markdown("### 提示词优化器设置")
                             api_format = gr.Dropdown(
@@ -475,13 +527,22 @@ def build_ui():
                 # ========== 事件绑定 ==========
                 optimize_method.change(
                     lambda m: (
-                        gr.update(visible=(m == "third_party")),
+                        gr.update(visible=(m == "third_party")),  # 第三方API设置按钮
+                        gr.update(visible=(m == "builtin")),      # 内置文本编码器
+                        gr.update(visible=False) if m != "third_party" else gr.skip(),  # 切回内置时收起面板
                         f"当前：{_opt_label(m)} 优化"
                         + ("（未配置 API 时静默原样返回）" if m == "third_party" else "")
                     ),
                     [optimize_method],
-                    [api_settings_btn, optimize_note],
+                    [api_settings_btn, text_encoder, api_settings_panel, optimize_note],
                 )
+
+                # 选中官方风格提示词模板时，将对应提示词填入提示词框
+                def _on_template_change(key):
+                    if key and key.startswith("style_"):
+                        return gr.update(value=STYLE_PROMPT_MAP.get(key, ""))
+                    return gr.skip()
+                tmpl.change(_on_template_change, [tmpl], [prompt])
 
                 api_settings_btn.click(
                     lambda: gr.update(visible=True),
@@ -540,7 +601,7 @@ def build_ui():
                         *[c for c, _ in image_refs],
                         *[c for c, _ in audio_refs],
                         *[c for c, _ in video_refs],
-                        mode, resolution, optimize_method,
+                        mode, resolution, optimize_method, text_encoder,
                         *[c for c, _ in lora_rows],
                         *[c for _, c in lora_rows],
                         step, seed, width, height, duration, fps,
@@ -551,7 +612,7 @@ def build_ui():
                 reset_btn.click(
                     reset_defaults,
                     None,
-                    [mode, resolution, optimize_method,
+                    [mode, resolution, optimize_method, text_encoder,
                      *[c for c, _ in lora_rows], *[c for _, c in lora_rows],
                      step, seed, width, height, duration, fps],
                 )

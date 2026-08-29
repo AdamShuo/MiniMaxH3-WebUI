@@ -49,6 +49,7 @@ def create_generation(req: GenerationCreateRequest, db: Session = Depends(get_db
         first_stage_resolution=req.first_stage_resolution or "360P",
         loras=json.dumps([s.model_dump() for s in req.loras]),
         optimize_method=req.optimize_method or "builtin",
+        text_encoder=req.text_encoder or "clip",
         step=req.step,
         seed=req.seed,
         width=req.width,
