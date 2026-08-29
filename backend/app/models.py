@@ -55,6 +55,14 @@ class GenerationRequest(Base):
     template_id: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     optimized_prompt: Mapped[str | None] = mapped_column(Text)
     reference_asset_ids: Mapped[str | None] = mapped_column(Text)  # JSON array of ids
+    video_asset_ids: Mapped[str | None] = mapped_column(Text)  # JSON array of ids
+    mode: Mapped[str] = mapped_column(
+        String(32), default="reference", nullable=False
+    )  # reference | first_frame | dual_stage
+    first_stage_resolution: Mapped[str] = mapped_column(
+        String(16), default="360P", nullable=False
+    )  # 360P | 540P | 720P | 1080P
+    loras: Mapped[str | None] = mapped_column(Text)  # JSON array of LoRASpec
     step: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     seed: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
     width: Mapped[int] = mapped_column(Integer, default=1376, nullable=False)

@@ -62,7 +62,11 @@ async def _run(task_id: int) -> None:
             step=gen.step, seed=gen.seed, width=gen.width, height=gen.height,
             duration=gen.duration, fps=gen.fps,
             lora_name=settings.h3_lora_name, lora_strength=settings.h3_lora_strength,
-            resolution=gen.optimized_prompt and "360P" or settings.default_resolution,
+            resolution=gen.first_stage_resolution or settings.default_resolution,
+            mode=gen.mode or "reference",
+            first_stage_resolution=gen.first_stage_resolution or settings.default_resolution,
+            video_paths=_reference_paths(db, gen.video_asset_ids, media="video"),
+            loras=_parse_loras(db, gen.loras),
         )
         ref_paths = _reference_paths(db, gen.reference_asset_ids)
         audio_paths = _reference_paths(db, gen.reference_asset_ids, media="audio")
@@ -134,4 +138,37 @@ def _reference_paths(db, raw_ids, media: str | None = None) -> list[str]:
             p = Path(asset.storage_path)
             if p.exists():
                 out.append(str(p))
+    return out
+
+
+def _parse_loras(db, raw: str | None) -> list[dict]:
+    """把 ORM 中存储的 JSON 字符串解析成 [{name, strength}] 列表。
+
+    兼容两种来源：前端上传后返回 asset id（需在 db 中查文件名），
+    或前端直接传 LoRA 文件名。worker 阶段统一解析为 name+strength，
+    交给执行引擎（run_minimax_h3.py 的 apply_lora）消费。
+    """
+    if not raw:
+        return []
+    try:
+        items = raw if isinstance(raw, list) else __import__("json").loads(raw)
+    except Exception:
+        return []
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        name = it.get("name")
+        asset_id = it.get("asset_id")
+        strength = float(it.get("strength", 1.0))
+        if asset_id is not None:
+            asset = None
+            try:
+                asset = db.get(Asset, int(asset_id))
+            except Exception:
+                asset = None
+            if asset and asset.media_type == "lora":
+                name = asset.filename
+        if name:
+            out.append({"name": name, "strength": strength})
     return out

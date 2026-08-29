@@ -45,10 +45,25 @@ class PromptOptimizeRecordVO(BaseModel):
 
 
 # ---------- M3 生成编排 (Generation) ----------
+class LoRASpec(BaseModel):
+    """单个 LoRA 引用：文件 id（来自 /api/v1/assets）或名称，以及强度 0.0~1.0。"""
+    asset_id: Optional[int] = Field(default=None, description="已上传 LoRA 的 asset id")
+    name: Optional[str] = Field(default=None, description="LoRA 文件名（未上传时直接填）")
+    strength: float = Field(default=1.0, ge=0.0, le=2.0, description="LoRA 强度")
+
+
 class GenerationCreateRequest(BaseModel):
     template_key: Optional[str] = None
     prompt: str = Field(..., min_length=1, description="H3 提示词（支持 Ref2VA/FL2VA 结构）")
+    # 参考素材（图片 + 音频 + 视频，分别对应 Asset.media_type=image/audio/video）
     reference_asset_ids: list[int] = Field(default_factory=list)
+    video_asset_ids: list[int] = Field(default_factory=list)
+    # 生成模式：参考视频 reference / 首帧 first_frame / 双阶段 dual_stage
+    mode: str = Field(default="reference", description="reference | first_frame | dual_stage")
+    # 一阶段分辨率档位（对应原界面 360P / 540P / 720P ...）
+    first_stage_resolution: str = Field(default="360P", description="360P | 540P | 720P | 1080P")
+    # LoRA（最多 6 个，每个带强度）
+    loras: list[LoRASpec] = Field(default_factory=list)
     step: int = 8
     seed: int = -1
     width: int = 1376
@@ -69,6 +84,10 @@ class GenerationRequestVO(BaseModel):
     template_id: int = 0
     optimized_prompt: Optional[str] = None
     reference_asset_ids: Optional[Any] = None
+    video_asset_ids: Optional[Any] = None
+    mode: str = "reference"
+    first_stage_resolution: str = "360P"
+    loras: Optional[Any] = None
     step: int
     seed: int
     width: int

@@ -15,14 +15,28 @@ from ..schemas import AssetVO
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
 
-_MEDIA = {"image": 100, "audio": 200, "video": 200}
+_MEDIA = {"image": 100, "audio": 200, "video": 200, "lora": 500}
+
+# 扩展名 -> 媒体类型（当 content-type 不可靠时，如 .safetensors 常为 octet-stream）
+_EXT_MEDIA = {
+    ".safetensors": "lora", ".pt": "lora", ".ckpt": "lora", ".bin": "lora",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".bmp": "image",
+    ".mp3": "audio", ".wav": "audio", ".flac": "audio", ".aac": "audio", ".m4a": "audio",
+    ".mp4": "video", ".mov": "video", ".webm": "video", ".mkv": "video",
+}
 
 
 @router.post("", response_model=AssetVO, status_code=201)
-async def upload_asset(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    media = (file.content_type or "").split("/")[0]
+async def upload_asset(
+    file: UploadFile = File(...),
+    media_type: str | None = None,
+    db: Session = Depends(get_db),
+):
+    # 媒体类型优先级：显式参数 > content-type > 扩展名推断 > 兜底
+    media = (media_type or (file.content_type or "").split("/")[0]).lower()
     if media not in _MEDIA:
-        media = "image" if file.filename else "audio"
+        ext = (Path(file.filename or "bin").suffix or "").lower()
+        media = _EXT_MEDIA.get(ext, "image" if file.filename else "audio")
     limit = _MEDIA.get(media, 200)
     data = await file.read()
     if len(data) > limit * 1024 * 1024:

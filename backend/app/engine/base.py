@@ -25,6 +25,11 @@ class GenParams:
     lora_name: str = ""
     lora_strength: float = 1.0
     resolution: str = "360P"
+    # ---- 新增（对齐原 Windows 界面） ----
+    mode: str = "reference"                  # reference | first_frame | dual_stage
+    first_stage_resolution: str = "360P"    # 360P | 540P | 720P | 1080P
+    video_paths: list[str] = None           # 参考视频绝对路径
+    loras: list[dict] = None                # [{name, strength}]
 
 
 class EngineResult(BaseModel):
