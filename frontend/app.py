@@ -568,21 +568,21 @@ def build_ui():
                 # 小窗「引用」按钮：通过 JS 在提示词框光标处插入标记
                 for i, (im, btn) in enumerate(image_refs, 1):
                     btn.click(
-                        fn=lambda x: x,
+                        fn=lambda: None,
                         inputs=None,
                         outputs=prompt,
                         js=f"() => insertPromptMarker('<Picture {i}>')",
                     )
                 for i, (au, btn) in enumerate(audio_refs, 1):
                     btn.click(
-                        fn=lambda x: x,
+                        fn=lambda: None,
                         inputs=None,
                         outputs=prompt,
                         js=f"() => insertPromptMarker('<Audio {i}>')",
                     )
                 for i, (vd, btn) in enumerate(video_refs, 1):
                     btn.click(
-                        fn=lambda x: x,
+                        fn=lambda: None,
                         inputs=None,
                         outputs=prompt,
                         js=f"() => insertPromptMarker('<Video {i}>')",
