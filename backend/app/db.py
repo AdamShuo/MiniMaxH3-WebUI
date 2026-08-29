@@ -6,12 +6,38 @@ production store). All models map to the t_* tables from 系统设计 §4.2.
 """
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import settings
+
+
+def _ensure_sqlite_parent_dir() -> None:
+    """Create the parent directory of a SQLite file if it does not exist.
+
+    The default DATABASE_URL is sqlite:////data/db/app.db (a Docker volume path).
+    On a bare-metal run the directory may not exist yet, and SQLite raises
+    'unable to open database file' at connect time. For SQLite we proactively
+    mkdir -p the parent so the DB can be created wherever the path points.
+    """
+    url = settings.database_url
+    if not url.startswith("sqlite"):
+        return
+    # sqlite:////abs/path -> '/abs/path' ; sqlite:///rel -> 'rel'
+    path = url.split("///", 1)[1] if "///" in url else ""
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent and not os.path.exists(parent):
+        os.makedirs(parent, exist_ok=True)
+        logging.getLogger("db").info("created SQLite dir: %s", parent)
+
+
+_ensure_sqlite_parent_dir()
 
 _connect_args = {}
 if settings.database_url.startswith("sqlite"):

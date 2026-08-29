@@ -17,9 +17,27 @@ from .api import assets_router, generations_router, results_router, tasks_router
 from .config import settings
 from .db import engine, init_db
 
-# frontend 包可能位于仓库根的 frontend/（本地裸跑）或容器 /app/frontend（镜像）。
-# 把它加入 sys.path 以便 `from frontend.app import build_ui` 可达。
-_FRONTEND_DIR = os.environ.get("FRONTEND_DIR")
+# frontend 包可能位于：
+#   - 仓库根的 frontend/（本地裸跑：<root>/backend/app/main.py 与 <root>/frontend 同级）
+#   - 容器 /app/frontend（镜像，由 Dockerfile ENV FRONTEND_DIR=/app/frontend 指定）
+# 自动解析，优先用 FRONTEND_DIR，否则向上查找含 app.py 的 frontend 目录。
+def _resolve_frontend_dir() -> str | None:
+    env = os.environ.get("FRONTEND_DIR")
+    if env:
+        return env
+    here = os.path.dirname(os.path.abspath(__file__))  # .../backend/app
+    cur = here
+    for _ in range(4):  # 向上最多 4 层：app -> backend -> root -> ...
+        cand = os.path.join(cur, "frontend")
+        if os.path.isdir(cand) and os.path.isfile(os.path.join(cand, "app.py")):
+            return cand
+        cur = os.path.dirname(cur)
+    if os.path.isdir("/app/frontend") and os.path.isfile("/app/frontend/app.py"):
+        return "/app/frontend"
+    return None
+
+
+_FRONTEND_DIR = _resolve_frontend_dir()
 if _FRONTEND_DIR and _FRONTEND_DIR not in sys.path:
     sys.path.insert(0, _FRONTEND_DIR)
 
