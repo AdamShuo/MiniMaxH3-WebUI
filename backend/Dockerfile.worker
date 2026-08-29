@@ -23,6 +23,7 @@ COPY inference /app/inference
 COPY comfy_core /app/comfy_core
 COPY prompt_guides /prompt_guides
 COPY reference /app/reference
+COPY scripts /app/scripts
 
 ENV DATA_ROOT=/data \
     PROMPT_GUIDES_DIR=/prompt_guides \
