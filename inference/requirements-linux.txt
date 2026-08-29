@@ -1,0 +1,71 @@
+# =============================================================================
+# MiniMax-H3 直接 Python 推理 · Linux 依赖清单（Linux 适配版）
+# -----------------------------------------------------------------------------
+# 来源：原 Windows 嵌入式环境 F:\...\capai\_internal（101 个包，Python 3.10）
+# 策略：用同名 Linux wheel 1:1 复刻版本；移除 Windows 专有包；CUDA 构建按实例驱动对齐。
+# 重要：torch / torchvision / torchaudio / sageattention / nunchaku 的 "+cuXXX"
+#       构建标签必须与云端 GPU 实例的 CUDA 驱动一致（源环境是 cu130=CUDA13）。
+#       若实例为 CUDA 12.4/12.8，请相应改为 +cu124 / +cu128。
+# 安装建议：先建 Python 3.10 venv，再 pip install（torch 系列用 --extra-index-url
+#           https://download.pytorch.org/whl/cu130 或对应 cu 目录）。
+# =============================================================================
+
+# ---- 核心推理栈（版本需严格对齐） ----
+torch==2.10.0+cu130
+torchvision==0.25.0+cu130
+torchaudio==2.10.0
+# 说明：上面三行是 cu130 构建；按实例 CUDA 改为 +cu124 / +cu128 后，下面依赖保持版本号不变。
+
+transformers==4.57.6
+diffusers==0.37.1
+accelerate==1.12.0
+sageattention==2.2.0+cu130torch2.9.0andhigher.post4
+nunchaku==1.3.0.dev20260213+cu13.0torch2.10
+bitsandbytes==0.49.1
+torchao==0.13.0
+peft==0.17.1
+rotary_embedding_torch==0.8.9
+
+# ---- 音频 / 图像 ----
+librosa==0.10.2
+pyloudnorm==0.1.1
+av==16.0.1
+soundfile
+scipy
+numpy==2.2.6
+pillow==11.0.0
+opencv_python==4.10.0.84
+imageio
+imageio-ffmpeg
+
+# ---- ComfyUI 内部（推理所需，非 server） ----
+comfy_kitchen==0.2.31          # "comfy kitchen attention" 注意力后端
+comfy_aimdo==0.4.13
+# 注意：comfy / comfy_api / comfy_extras 与 comfy/ldm/minimax* 通过 vendored 源码提供，
+#       不在此 pip 安装（见 LINUX_PORT.md §3 的 comfy_core/ 目录）。
+
+# ---- 模型加载 / 工具 ----
+safetensors==0.6.2
+huggingface_hub==0.34.4
+tokenizers==0.22.1
+sentencepiece==0.2.1
+tiktoken==0.12.0
+protobuf==5.29.5
+filelock==3.13.1
+fsspec==2024.6.1
+pyyaml==6.0.2
+einops
+omegaconf
+regex==2025.9.1
+requests==2.32.5
+
+# ---- 可选（人脸/前处理，视需求） ----
+insightface==0.7.3
+facexlib==0.3.0
+
+# =============================================================================
+# Windows 专有包 → Linux 处理（不要安装下面这些）：
+#   triton_windows 3.7.1.post27   -> 替换为标准 triton（通常由 torch 依赖自动带）
+#   pyreadline3 3.5.4             -> 直接删除（仅 Windows 交互 REPL 用）
+#   api-ms-win-*.dll / *.pyd      -> 由 Linux Python 运行时/对应 wheel 提供，忽略
+# =============================================================================
