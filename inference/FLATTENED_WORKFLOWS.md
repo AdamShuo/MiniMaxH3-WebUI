@@ -166,7 +166,34 @@
 
 ---
 
-## 四、模型文件清单（需放到 Linux 的 `models/` 对应子目录）
+## 四、运行器接线映射（`run_minimax_h3.py` 函数 ↔ 工作流阶段）
+
+> 运行器不逐节点复刻，而是调用**开放**节点（`MiniMaxH3Easy*` 门面 +
+> `nodes_minimax_h3` 的 `SigmaShift`），并把**密封**节点以 `comfy.*` 公共 API 重构。
+> 下表把 `FLATTENED_WORKFLOWS.md` 的 S0–S10 / Pass2 阶段对到具体函数。
+
+| 工作流阶段 | 运行器函数 | 说明 |
+|---|---|---|
+| S0 加载模型 | `build_bundle()` | `MiniMaxH3EasyLoader.load(...)[0]`（实例方法，返回 `(bundle,)`） |
+| S1 参考媒体 | `prepare_conditioning(media=...)` | 通过 `MiniMaxH3Easy.generate` 的 `media` 关键字入参 |
+| S2 核心条件 | `prepare_conditioning()` | `MiniMaxH3Easy.generate` → `MiniMaxH3EasyOutput.unpack` |
+| S3 LoRA | `apply_lora()` | **重构**：`comfy.sd.load_lora_for_models` |
+| S4 注意力后端 | `set_attention_backend()` | **重构**：切换 `comfy.ldm.modules.attention.attention_function` |
+| S5/S6/S7 采样 | `sample_h3()` | **重构**：`MiniMaxH3SigmaShift.execute` + `prepare_noise` + `comfy.samplers.sample` |
+| S8 VAE 解码 | `decode_av()` | **重构**：直调 `MiniMaxH3VideoVAE` / `MiniMaxH3AudioVAE.decode` |
+| S9/S10 组视频+保存 | `save_video()` | **重构**：imageio 写帧 + ffmpeg（`imageio_ffmpeg`）mux 音轨 |
+| Pass2 阶段 A | `run_pass2()` 的前半 | 同单遍 `run_single_pass` 逻辑 |
+| Pass2 阶段 B.5 | `run_pass2()` 内 `SecondPassConditioning.rebuild(...)[0]` | 开放节点，取目标分辨率二遍条件 |
+| Pass2 阶段 B 二遍采样/解码/放大 | `run_pass2()` 后半 | 复用 `sample_h3` / `decode_av`，`_upscale_frames` 双线性放大到 1920×1088 |
+
+**已知简化 / 待 GPU 验证项**
+- 提示词优化已关闭（`_noop_optimize` 桩），不影响推理。
+- 双阶段 `run_pass2()` 当前未把第一遍音频潜在经 `LTXVConcatAVLatent` 回灌第二遍，
+  仅用 `rebuild` 在目标分辨率重建条件；如需严格对齐原工作流，需补这一 concat（最高风险项之一）。
+- AV 潜在（video+audio NestedTensor）能否被 `comfy.samplers.sample` 原样保留，需实跑确认；
+  `decode_av()` 对异常形状会给出明确报错。
+
+## 五、模型文件清单（需放到 Linux 的 `models/` 对应子目录）
 
 | 文件 | 用途 | 来源 |
 |---|---|---|

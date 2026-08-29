@@ -78,45 +78,97 @@
 
 ## 3. 头less 运行器策略（推荐落地方式）
 
+> 实际落地结构（已生成，见仓库 `comfy_core/`）：
+
 ```
 inference/
-├── run_minimax_h3.py        # 头less 运行器：直接调用 nodes_minimax_h3 节点 execute()
-├── comfy_core/              # vendored ComfyUI 内核（仅保留推理所需）
-│   ├── comfy/               # model_management / model_sampling / nested_tensor / utils / ldm/minimax / ldm/minimax_music
-│   ├── comfy_api/           # io.ComfyNode / ComfyExtension 框架
+├── run_minimax_h3.py        # 头less 运行器：复用开放节点 + 重构密封节点
+├── run.sh                   # Linux 启动脚本（设 PYTHONPATH/comfy_core、建模型目录、转发参数）
+├── comfy_core/              # vendored ComfyUI 内核（仅保留推理所需，来自 F 盘只读源逐字拷贝）
+│   ├── comfy/               # model_management / model_sampling / nested_tensor / utils /
+│   │                       #   ldm/minimax (model.py/vae.py/audio_vae.py) / ldm/minimax_music
+│   ├── comfy_api/           # io.ComfyNode / ComfyExtension / NodeOutput 框架
 │   ├── comfy_extras/
-│   │   └── nodes_minimax_h3.py
-│   └── transformers/models/minimax/
+│   │   └── nodes_minimax_h3.py        # 开放节点：Reference/ImageToVideo/AddGuide/SigmaShift
+│   ├── custom_nodes/
+│   │   └── ComfyUI-MiniMaxH3-Easy/    # 薄封装：Loader / Easy / EasyOutput /
+│   │                               #   SecondPassConditioning / MediaBridge（开放）
+│   ├── folder_paths.py       # SHIM：get_filename_list / folder_names_and_paths / *_directory
+│   ├── node_helpers.py       # SHIM：conditioning_set_values
+│   └── nodes.py              # SHIM：MAX_RESOLUTION + UNETLoader/CLIPLoader/VAELoader
 ├── requirements-linux.txt
 ├── FLATTENED_WORKFLOWS.md
 └── LINUX_PORT.md
 ```
 
-- **做法**：克隆/拷贝 ComfyUI 仓库到 `comfy_core/`（锁定一个 commit，保证 `comfy` API 稳定），
-  把 `nodes_minimax_h3.py` 与 `comfy/ldm/minimax*`、`transformers/models/minimax` 一并放进去。
-- **运行器** `run_minimax_h3.py` 直接 `from comfy_extras import nodes_minimax_h3 as h3`，
-  按 `FLATTENED_WORKFLOWS.md` 的 S0–S10 顺序构造输入并调用 `execute()`，绕过 server/UI/节点图。
+- **做法**：`comfy/` / `comfy_api/` / `comfy_extras/nodes_minimax_h3.py` 是从
+  `F:\...\capai\_internal\comfy` **逐字拷贝**的 H3 定制 fork（非全新 clone ComfyUI），因为
+  真实推理代码在该 fork 的 `comfy/ldm/minimax*` 里；`custom_nodes/ComfyUI-MiniMaxH3-Easy/nodes.py`
+  是开放的薄封装。三个 `SHIM` 文件（`folder_paths.py` / `node_helpers.py` / `nodes.py`）是
+  **新增**的——因为原 app-root 的这三个模块被封进 `capai.exe`，本仓库以最小 API 面重新实现。
+- **运行器** `run_minimax_h3.py` 通过 `comfy_core` 的 `sys.path` 引导直接 `import comfy.*`、
+  `from comfy_extras import nodes_minimax_h3 as h3`、并以命名文件加载方式 `importlib` 加载自定义节点
+  （避免与 shim `nodes.py` 重名冲突），按 `FLATTENED_WORKFLOWS.md` 的 S0–S10 顺序调用，绕过
+  server / UI / 节点图。
 - **收益**：消除 ComfyUI server 启动、节点图执行引擎、自定义节点版本漂移、UI 相关不确定性；
   单进程、可断点、可批处理、可嵌入 WebUI 后端。
 
-> 注意：`comfy` 内部并非稳定公开 API，vendoring 锁定 commit 是关键，升级需回归测试。
+> 注意：`comfy` 内部并非稳定公开 API，vendoring 锁定 fork 版本是关键，升级需回归测试。
+
+### 3.1 开放节点（直接复用） vs 密封节点（已重构）
+
+原工作流里的节点分两类——**开放**节点（源码在 vendored `comfy`/`custom_nodes` 里，直接调用）
+与**密封**节点（源码编译进 `capai.exe`，不可得，已在 `run_minimax_h3.py` 中以
+`comfy.*` 公共 API **重构**，标注 `[#RECONSTRUCTED]`）：
+
+| 工作流节点 | 类别 | 运行器中的实现 |
+|---|---|---|
+| `MiniMaxH3EasyLoader.load` | 开放 | `build_bundle()` |
+| `MiniMaxH3Easy.generate` / `MiniMaxH3EasyOutput.unpack` | 开放 | `prepare_conditioning()` |
+| `MiniMaxH3SigmaShift.execute` | 开放 | `sample_h3()` 内调用 |
+| `MiniMaxH3EasySecondPassConditioning.rebuild` | 开放 | `run_pass2()` 内调用 |
+| `MiniMaxH3EasyMediaBridge` | 开放 | （媒体桥接，参考图/音频入参用） |
+| `MiniMaxH3EasySampler`（采样） | **密封→重构** | `sample_h3()`：`comfy.samplers.sample` + `calculate_sigmas` + `prepare_noise` |
+| `MiniMaxH3EasyLoRAApply` | **密封→重构** | `apply_lora()`：`comfy.sd.load_lora_for_models` |
+| `MiniMaxH3EasyAttentionBackend` | **密封→重构** | `set_attention_backend()`：切换 `comfy.ldm.modules.attention` |
+| `MiniMaxH3EasyVAEDecode` | **密封→重构** | `decode_av()`：直调 `MiniMaxH3VideoVAE`/`MiniMaxH3AudioVAE.decode` |
+| `MiniMaxH3EasyCreateVideo` / `SaveVideo` | **密封→重构** | `save_video()`：imageio + ffmpeg mux 音视频 |
+| 提示词优化 API | **关闭** | `_noop_optimize` 桩（去掉第三方 LLM 出网） |
+
+> 密封节点重构路径（采样 / VAE 解码 / 双阶段二遍条件）是**最高风险**部分，
+> 必须在云端 GPU 实例实跑验证（先 `--check` 校验 import，再真正跑一条视频）。
 
 ---
 
 ## 4. 实施步骤（到云端实例上执行）
 
-1. 准备 Linux Python 3.10 venv/conda。
-2. `pip install -r requirements-linux.txt`（按实例 CUDA 调整 torch 构建标签）。
-3. 克隆 ComfyUI 到 `comfy_core/`（锁定 commit），保留上述子模块；其余 server/frontend 代码可删。
-4. 放入 `nodes_minimax_h3.py` 与 `comfy/ldm/minimax*`、`transformers/models/minimax`。
-5. 下载 6 个权重到 `models/` 对应子目录。
-6. `python inference/run_minimax_h3.py --mode reference --prompt "..." --image ref.png`
-   先单遍跑通，再试 `--mode dual_stage` 双阶段。
+> `comfy_core/`（含 vendored `comfy`/`comfy_api`/`comfy_extras`/`custom_nodes` 与三个 SHIM）
+> 已随仓库提供，**无需再 clone ComfyUI**。只需准备依赖 + 权重，然后跑 `run.sh`。
+
+1. 准备 Linux Python 3.10 venv/conda（`python3 --version` 应为 3.10.x）。
+2. 安装依赖：`cd <repo> && PIP_INSTALL=1 ./inference/run.sh --check`
+   （`run.sh` 会 `pip install -r inference/requirements-linux.txt`；按需把 torch 系列
+   的 `+cu130` 改成实例实际 CUDA 的 `+cu124`/`+cu128`，见 `requirements-linux.txt` 顶部注释）。
+3. 下载 6 个权重到 `models/` 对应子目录（`unet/` 放 FL2VA/REF2VA，`clip/` 放文本编码器，
+   `vae/` 放视频/音频 VAE，`loras/` 放 turbo LoRA）。**不要带入 git**（`.gitignore` 已排除 `models/`）。
+4. 先校验 import 链路：`python inference/run_minimax_h3.py --check`
+   （该命令只验证 `comfy`/`comfy_api`/自定义节点/SHIM 全部可解析，不加载权重、不占显存）。
+5. 单遍跑通：`python inference/run_minimax_h3.py --mode reference --prompt "..." \
+   --ref-image-1 ref.png --output out.mp4`（或 `./inference/run.sh --config job.json`）。
+6. 双阶段：准备 `pass2.json`（第二阶参数 + 目标分辨率 1920×1088），用
+   `python inference/run_minimax_h3.py --config job.json --pass2-config pass2.json`。
 
 ---
 
 ## 5. 风险提示
-- `comfy` 内部 API 随版本变动；锁定 commit 并写好冒烟测试。
+- `comfy` 内部 API 随版本变动；vendoring 锁定 fork 版本是关键，升级需回归测试。
 - `nunchaku`/`sageattention` 为预发布/特定 CUDA 构建，若实例 CUDA 不符需重新编译或换等价实现。
-- 提示词优化 API（`zz.211b.site`/`gpt-5.6-terra`）是第三方外部服务，**与 H3 推理解耦**，
-  建议改为可配置的自有 LLM 端点或去掉，避免数据出网与依赖不确定性。
+- **密封节点重构路径（采样 / VAE 解码 / 双阶段二遍采样）未经真实 GPU 运行验证**：
+  - 采样器 `comfy.samplers.sample` 是否能原样保留 AV 潜在（video+audio 的 NestedTensor）需实跑确认；
+    `decode_av()` 已对"非 2 分量 NestedTensor"给出明确报错，便于在 GPU 上快速定位。
+  - 双阶段 `run_pass2()` 当前为**简化重建**：第一遍解码出的视频帧未回灌第二遍
+    （原工作流用 `LTXVConcatAVLatent` 复用第一遍音频潜在），第二遍条件仅由
+    `MiniMaxH3EasySecondPassConditioning.rebuild` 在目标分辨率重建。若需严格对齐原工作流，
+    需补"第一遍音频潜在 → 第二遍 concat"这一段（见 `FLATTENED_WORKFLOWS.md` §二 阶段 B.8）。
+- 提示词优化 API（`zz.211b.site`/`gpt-5.6-terra`）已**关闭**（改为 `_noop_optimize` 桩），
+  去掉了第三方 LLM 出网依赖；如需提示词改写，可在 `run_minimax_h3.py` 中接自有端点。
